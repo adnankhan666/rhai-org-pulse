@@ -1,0 +1,17 @@
+{
+  "authorUid": "achen",
+  "authorName": "Alice Chen",
+  "axis": "management",
+  "value": "achen",
+  "periodEnd": "2026-04-27",
+  "updatedAt": "2026-04-26T10:00:00.000Z",
+  "summary": "Auth migration on track despite staging dependency. Escalated to infra. Emma is on PTO — not a concern.",
+  "highlights": [
+    "Auth token rotation shipped ahead of schedule",
+    "API rate limiting design complete"
+  ],
+  "risks": [
+    "Staging environment dependency could slip the sprint"
+  ],
+  "escalations": []
+}

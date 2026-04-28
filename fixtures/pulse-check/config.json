@@ -1,0 +1,10 @@
+{
+  "cadence": "weekly",
+  "deadlineDay": "friday",
+  "reminderDay": "thursday",
+  "pinnedTags": [],
+  "thresholds": {
+    "blockerAgeWeeksForEscalation": 2,
+    "lowSubmissionRatePercent": 60
+  }
+}

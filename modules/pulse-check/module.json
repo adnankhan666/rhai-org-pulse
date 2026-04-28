@@ -1,0 +1,24 @@
+{
+  "name": "Pulse Check",
+  "slug": "pulse-check",
+  "description": "Weekly status updates with multi-axis roll-up and progressive compression",
+  "icon": "activity",
+  "order": 5,
+  "defaultEnabled": false,
+  "requires": ["team-tracker"],
+  "client": {
+    "entry": "./client/index.js",
+    "navItems": [
+      { "id": "my-update", "label": "My Update", "icon": "PenLine", "default": true },
+      { "id": "team-dashboard", "label": "Team", "icon": "Users" },
+      { "id": "reports", "label": "My Reports", "icon": "ClipboardList" },
+      { "id": "initiatives", "label": "Initiatives", "icon": "Layers" },
+      { "id": "heatmap", "label": "Org Heatmap", "icon": "BarChart3" },
+      { "id": "history", "label": "History", "icon": "Clock" }
+    ],
+    "settingsComponent": "./client/components/PulseCheckSettings.vue"
+  },
+  "server": {
+    "entry": "./server/index.js"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "uid": "bsmith",
+  "personName": "Bob Smith",
+  "periodStart": "2026-04-21",
+  "periodEnd": "2026-04-27",
+  "submittedAt": "2026-04-25T14:30:00.000Z",
+  "updatedAt": "2026-04-25T14:30:00.000Z",
+  "status": "submitted",
+  "highlights": [
+    { "text": "Completed auth token rotation feature" },
+    { "text": "Paired with Carol on API rate limiting design" }
+  ],
+  "blockers": [
+    { "text": "Staging environment not provisioned — blocking integration testing", "severity": "high", "resolved": false }
+  ],
+  "plans": [
+    { "text": "Start implementation of API rate limiting" },
+    { "text": "Write integration tests once staging is available" }
+  ],
+  "sentiment": "yellow",
+  "tags": ["auth-migration"],
+  "notes": ""
+}

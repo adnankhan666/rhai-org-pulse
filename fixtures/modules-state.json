@@ -1,9 +1,10 @@
 {
-  "upstream-pulse": true,
-  "ai-impact": true,
-  "org-roster": true,
-  "release-analysis": true,
   "team-tracker": true,
+  "ai-impact": true,
   "feature-traffic": true,
-  "allocation-tracker": true
+  "release-analysis": true,
+  "release-planning": true,
+  "allocation-tracker": false,
+  "upstream-pulse": false,
+  "pulse-check": true
 }

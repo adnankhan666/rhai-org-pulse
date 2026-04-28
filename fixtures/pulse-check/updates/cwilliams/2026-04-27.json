@@ -1,0 +1,20 @@
+{
+  "uid": "cwilliams",
+  "personName": "Carol Williams",
+  "periodStart": "2026-04-21",
+  "periodEnd": "2026-04-27",
+  "submittedAt": "2026-04-24T16:00:00.000Z",
+  "updatedAt": "2026-04-24T16:00:00.000Z",
+  "status": "submitted",
+  "highlights": [
+    { "text": "Completed API rate limiting design document" },
+    { "text": "Reviewed 3 PRs for the platform team" }
+  ],
+  "blockers": [],
+  "plans": [
+    { "text": "Begin rate limiting implementation" }
+  ],
+  "sentiment": "green",
+  "tags": [],
+  "notes": "Good week overall."
+}
