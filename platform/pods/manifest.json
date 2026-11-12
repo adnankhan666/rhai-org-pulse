@@ -1,0 +1,23 @@
+{
+  "type": "module-views",
+  "targetModule": "team-tracker",
+  "navItems": [
+    {
+      "id": "pods",
+      "label": "Pods",
+      "icon": "Box",
+      "order": 25
+    }
+  ],
+  "client": {
+    "views": {
+      "pods": "./client/views/PodsView.vue"
+    }
+  },
+  "server": {
+    "entry": "./server/index.js"
+  },
+  "secrets": {
+    "platform": ["jira"]
+  }
+}

@@ -1,5 +1,5 @@
 {
-  "fetchedAt": "2026-07-27T15:57:48.373Z",
+  "fetchedAt": "2026-11-12T00:00:00.000Z",
   "releases": [
     {
       "productName": "rhoai",
@@ -143,6 +143,14 @@
       "dueDate": "2026-08-19",
       "planningFreezeDate": "2026-06-24",
       "codeFreezeDate": null,
+      "featureFreezeDate": null
+    },
+    {
+      "productName": "rhai",
+      "releaseNumber": "rhai-3.7.EA1",
+      "dueDate": "2027-01-20",
+      "planningFreezeDate": "2026-11-11",
+      "codeFreezeDate": "2026-12-11",
       "featureFreezeDate": null
     }
   ]
