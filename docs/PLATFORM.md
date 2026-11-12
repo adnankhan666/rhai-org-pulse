@@ -230,6 +230,159 @@ module.exports = function register(router, context) {
 2. Create `platform/<name>/server/index.js` exporting the register function
 3. Run `npm run validate:platform` to verify the manifest
 
+## Pods (`platform/pods/`)
+
+The **Pods** page is an AI Eng-specific `module-views` extension targeting
+team-tracker. Step 1 is an intentional functional replica of the core **People**
+directory so Pods can diverge without modifying `@org-pulse/core` or the
+People page.
+
+- Route: `#/team-tracker/pods`
+- Nav item: **Pods**, after **People**
+- View: `client/views/PodsView.vue`
+- Local copies of the People page filter components live under
+  `client/components/`, `client/composables/`, and `client/utils/`
+- Uses the same registry, stats, sync-status, and field-definition APIs as People
+- Search matches every person value the directory can expose: org, title, team,
+  location, identities, lifecycle fields, and all `_appFields` values
+- Row checkboxes build a live pod preview between the search bar and table, with
+  a gradient bubble for each selected person
+- The pod name is editable; each member bubble has a remove control
+- The page is headed **Pods** with **Active**, **Archived**, and **+** sub-tabs
+- **+** opens the create flow; **Create** calls `POST /pods`, blocks fewer than
+  three members or a missing feature key client-side, surfaces server validation
+  errors, and returns to the Active list
+- Active and Archived show compact pod cards with tiny member initials. The `i`
+  button opens a pinned detail panel (see below) instead of a hover tooltip
+- Every pod carries a **feature key** such as `RHAISTRAT-2191`; active cards show
+  it as **Working on** and archived cards as **Worked on**. The key links to the
+  Jira browse URL
+- Active/Archived can be filtered by pod name, member, or feature key
+- **Completed** archives the pod
+- **Next outcome** atomically creates a new pod, archives the current pod, and
+  opens the new pod in Active
+- The header checkbox selects or clears all currently visible rows
+
+### Pod API and storage
+
+The server extension exposes:
+
+| Method | Endpoint |
+|---|---|
+| `GET` | `/api/modules/team-tracker/pods` |
+| `POST` | `/api/modules/team-tracker/pods` |
+| `GET` | `/api/modules/team-tracker/pods/:podId` |
+| `POST` | `/api/modules/team-tracker/pods/:podId/members` |
+| `POST` | `/api/modules/team-tracker/pods/:podId/duplicate` |
+| `POST` | `/api/modules/team-tracker/pods/:podId/next-outcome` |
+| `POST` | `/api/modules/team-tracker/pods/:podId/archive` |
+| `GET` | `/api/modules/team-tracker/pods/permissions/me` |
+| `GET` | `/api/modules/team-tracker/pods/:podId/mirror` |
+| `POST` | `/api/modules/team-tracker/pods/mirrors` |
+
+Rules enforced server-side:
+
+- Minimum **3 active members** at creation
+- At least one **Jira feature key** at creation. Keys are normalized to upper
+  case and verified against Jira: the issue must exist, have issue type
+  `Feature`, and not be in a `Done` status category. Creation fails closed with
+  `502` when Jira cannot be reached
+- A next outcome must use a **different** feature key from the pod it replaces,
+  and the new key goes through the same Jira check before the source pod is
+  archived
+- Globally unique, case-insensitive pod names
+- A person can belong to **only one active pod at a time**
+- No rename, no hard delete
+- Membership is **add-only**
+- Duplicate is only allowed for an archived source pod
+- Next outcome atomically archives the current pod and creates the new active pod
+- Archive keeps history and hides the pod from active lists
+- Creation requires **Senior Manager, Senior Engineering Manager, Director,
+  Senior Director, VP, SVP, CTO, or admin**
+- Add members, duplicate, and archive require the pod creator or an admin
+
+### Pod work mirror
+
+The Pods page projects each pod's feature into a read-only view. Nothing is
+written to Jira or Product Pages, and no mirrored value is stored on the pod
+record: everything is fetched at read time, so the pod stays the single record
+and Jira stays the source of truth.
+
+**Sources**
+
+- **Jira** — feature fields plus one `parent in (...)` query for child work items
+- **Product Pages** — code-freeze dates, read from
+  `releases/delivery/product-pages-releases-cache.json` via `readFromStorage`.
+  The cache is refreshed by the release tooling (a service account in
+  production); the demo refreshes it by hand
+
+**Derived values**
+
+- `progress` — child items grouped by status category into `done`, `inProgress`,
+  `todo`, `other`. Progress can go **down** when scope is added; it is computed,
+  never stored
+- `attention` — `delta = progress% − elapsed%`, with `elapsed` running from the
+  pod's `createdAt` to the code freeze. States: `delivered`, `overdue` (past
+  freeze and not done), `behind` (`delta <= −15`), `on_track`, `unknown`
+- `asOf` — Jira's own `updated` timestamp on the feature, not the fetch time, so
+  a stale number is visibly stale
+
+**Card display**
+
+Progress renders as a full-width segmented bar (done / in progress / to do) with
+`% · done/total` on the left and the attention chip plus days-to-freeze on the
+right. Card states, and the legend shown above the grid:
+
+| State | Meaning |
+|---|---|
+| On track (green) | In progress and keeping pace with elapsed time |
+| Behind (amber) | More than 15 points behind elapsed time |
+| Blocked / overdue (red) | Jira status blocked, or past code freeze and unfinished |
+| Delivered (blue) | All child work done |
+| To do / no signal (grey) | Not started, or no mirror yet |
+
+While the batch call is in flight the card shows a skeleton, not `0%`. A failed
+call shows **Mirror unavailable — retry**; a pod with no key shows **No Jira
+feature linked**. Archived pods keep their completed state and are not fetched.
+
+**Detail panel**
+
+Clicking `i` pins a panel (no hover, so it can be read) with three blocks:
+**Health** (Color, Status, Freeze, Progress), **Ownership** (Assignee, PM), and
+**Delivery** (Fix version, Release type). Jira labels and pod-internal metadata
+are deliberately excluded — this is a leadership review surface, not a Jira
+replacement.
+
+`Release Type` describes the feature itself (GA, TP, DP) and is independent of
+the release it ships in, so it is mirrored separately and never inferred from the
+fix version name.
+
+**Field mapping**
+
+| Pod view | Jira field |
+|---|---|
+| Summary | `summary` |
+| Status | `status` |
+| Color | `Color Status` (`customfield_10712`) |
+| Assignee | `assignee` |
+| PM | `Product Manager` (`customfield_10469`) |
+| Fix version | `fixVersions[0]` |
+| Target version | `Target Version` (`customfield_10855`) |
+| Release type | `Release Type` (`customfield_10851`) |
+| Owners / teams | `labels` (multi-valued; a pod may span teams) |
+
+Code freeze is resolved by matching version and phase, never the full version
+string: `3.7 EA1 RHOAI RELEASE` → `rhai-3.7.EA1` → `2026-12-11`. Version names
+collide across projects and some are archived, so the match prefers an entry
+that actually carries a freeze date.
+
+Production pods live under `team-data/pods/<podId>.json`. In demo mode they are
+kept in an in-memory session store so create/duplicate/archive can be exercised
+without making the demo fixtures writable.
+
+Run `npm run setup` after installing dependencies so the core platform is
+symlinked into the workspace.
+
 ## Dockerfile layering
 
 The core frontend builder does NOT include `platform/`. Deployment-specific
