@@ -28,7 +28,9 @@ const {
 const { getOrgDisplayNames } = require('../../../shared/server/roster-sync/config')
 const { createJiraClient } = require('../../../shared/server/jira')
 const { primaryFocusKey, buildMirror, buildMirrors, validateFeatureKeys } = require('./pod-mirror')
-const { buildPod360 } = require('./pod-360')
+const { generatePod360ForPod } = require('./pod-360-runner')
+const { getScheduleInfo, startScheduler } = require('./pod-360-schedule')
+const { confluenceStatus, publishPage, readSettings } = require('./confluence')
 
 function asyncRoute(fn) {
   return function (req, res, next) {
@@ -46,6 +48,16 @@ function requireUser(req, res, next) {
 async function loadPeopleMap(storage) {
   const registry = await storage.readFromStorage('team-data/registry.json')
   return registry?.people || {}
+}
+
+async function loadReleases(storage) {
+  try {
+    const cache = await storage.readFromStorage('releases/delivery/product-pages-releases-cache.json')
+    return (cache && cache.releases) || []
+  } catch (err) {
+    console.warn('[pods] Product Pages cache unavailable:', err.message)
+    return []
+  }
 }
 
 async function loadOrgNames(storage) {
@@ -233,6 +245,29 @@ function registerPodRoutes(router, context) {
     })
   }))
 
+  // Weekly 360 generation. Thursday 09:00 UTC; disabled with POD_360_SCHEDULE=off.
+  if (process.env.POD_360_SCHEDULE !== 'off') {
+    startScheduler({
+      storage,
+      generateForPod: async function () {
+        const pods = (await listPods(storage)).filter(pod => pod.status === 'active')
+        const peopleMap = await loadPeopleMap(storage)
+        const releases = await loadReleases(storage)
+        let generated = 0
+        for (const pod of pods) {
+          if (!primaryFocusKey(pod)) continue
+          try {
+            await generatePod360ForPod({ storage, jira: podJiraClient, pod, peopleMap, releases })
+            generated += 1
+          } catch (err) {
+            console.warn(`[pods] weekly 360 failed for ${pod.name}:`, err.message)
+          }
+        }
+        return generated
+      }
+    })
+  }
+
   /**
    * @openapi
    * /api/modules/team-tracker/pods/{podId}:
@@ -415,51 +450,132 @@ function registerPodRoutes(router, context) {
     const pod = await getPod(storage, req.params.podId)
     if (!pod) throw new PodError(404, 'Pod not found')
 
-    const issueKey = primaryFocusKey(pod)
-    if (!issueKey) {
+    if (!primaryFocusKey(pod)) {
       throw new PodError(400, 'This pod has no Jira feature key to report on')
     }
 
-    const peopleMap = await loadPeopleMap(storage)
-    const members = (pod.memberUids || [])
-      .map(uid => peopleMap[uid])
-      .filter(Boolean)
-      .map(person => ({ name: person.name }))
-
-    let releases = []
+    let report
     try {
-      const cache = await storage.readFromStorage('releases/delivery/product-pages-releases-cache.json')
-      releases = (cache && cache.releases) || []
-    } catch (err) {
-      console.warn('[pods] Product Pages cache unavailable:', err.message)
-    }
-
-    let mirror
-    try {
-      mirror = await buildMirror({
+      report = await generatePod360ForPod({
+        storage,
         jira: podJiraClient,
-        issueKey,
-        releases,
-        startDate: pod.createdAt
+        pod,
+        peopleMap: await loadPeopleMap(storage),
+        releases: await loadReleases(storage)
       })
     } catch (err) {
-      throw new PodError(502, 'Failed to build the work mirror for this pod', { reason: err.message })
+      throw new PodError(502, 'Failed to generate the 360 report', { reason: err.message })
     }
 
-    const { markdown, data } = buildPod360({ pod, mirror, members })
-    const day = new Date().toISOString().slice(0, 10)
-    const key = `team-data/pods/${pod.id}/360/${day}.json`
+    await audit(context, req, 'pod.360.generate', pod, `Generated 360 report for "${pod.name}"`)
+
+    res.status(201).json({ podId: pod.id, report })
+  }))
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/pods/360/schedule:
+   *   get:
+   *     tags: ['Pods']
+   *     summary: Weekly 360 schedule and next run
+   *     responses:
+   *       200:
+   *         description: Cadence, last run and next run
+   */
+  router.get('/pods/360/schedule', readAccess, asyncRoute(async function (req, res) {
+    res.json(await getScheduleInfo(storage))
+  }))
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/pods/360/confluence:
+   *   get:
+   *     tags: ['Pods']
+   *     summary: Whether Confluence publishing is configured
+   *     responses:
+   *       200:
+   *         description: Configured flag plus the settings that are missing
+   */
+  router.get('/pods/360/confluence', readAccess, asyncRoute(async function (req, res) {
+    res.json(confluenceStatus(context.secrets, process.env))
+  }))
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/pods/{podId}/360/publish:
+   *   post:
+   *     tags: ['Pods']
+   *     summary: Publish the latest pod 360 report to Confluence
+   *     description: >
+   *       Creates a page under the configured parent. This is an external
+   *       write, so it only runs when every Confluence setting is present and
+   *       a report already exists.
+   *     parameters:
+   *       - in: path
+   *         name: podId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       201:
+   *         description: Page created and the report annotated with its link
+   *       400:
+   *         description: No report yet, or Confluence is not configured
+   *       404:
+   *         description: Pod not found
+   *       502:
+   *         description: Confluence rejected the page
+   */
+  router.post('/pods/:podId/360/publish', readAccess, asyncRoute(async function (req, res) {
+    const pod = await getPod(storage, req.params.podId)
+    if (!pod) throw new PodError(404, 'Pod not found')
+
+    const dir = `team-data/pods/${pod.id}/360`
+    let files = []
+    try {
+      files = await storage.listStorageFiles(dir)
+    } catch (err) {
+      console.warn('[pods] 360 listing failed:', err.message)
+    }
+    const latest = files.filter(name => name.endsWith('.json')).sort().pop()
+    if (!latest) {
+      throw new PodError(400, 'Generate the 360 report before publishing it')
+    }
+
+    const status = confluenceStatus(context.secrets, process.env)
+    if (!status.configured) {
+      throw new PodError(400, 'Confluence publishing is not configured', {
+        configured: false,
+        missing: status.missing
+      })
+    }
+
+    const stored = await storage.readFromStorage(`${dir}/${latest}`)
+    if (!stored) throw new PodError(400, 'Stored report could not be read')
+
+    const day = latest.replace(/\.json$/, '')
+    let page
+    try {
+      page = await publishPage({
+        settings: readSettings(context.secrets, process.env),
+        title: `${pod.name} — 360 — ${day}`,
+        markdown: stored.markdown
+      })
+    } catch (err) {
+      throw new PodError(502, err.message)
+    }
 
     const report = {
-      podId: pod.id,
-      issueKey,
-      generatedAt: data.generatedAt,
-      markdown,
-      data,
-      confluence: null
+      ...stored,
+      confluence: {
+        pageId: page.pageId,
+        url: page.url,
+        title: page.title,
+        publishedAt: new Date().toISOString()
+      }
     }
-    await storage.writeToStorage(key, report)
-    await audit(context, req, 'pod.360.generate', pod, `Generated 360 report for "${pod.name}"`)
+    await storage.writeToStorage(`${dir}/${latest}`, report)
+    await audit(context, req, 'pod.360.publish', pod, `Published 360 report for "${pod.name}" to Confluence`)
 
     res.status(201).json({ podId: pod.id, report })
   }))

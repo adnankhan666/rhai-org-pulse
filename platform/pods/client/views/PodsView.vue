@@ -225,6 +225,15 @@ function attentionClass(pod) {
   return ATTENTION_CLASSES[mirror.attention.state] || ATTENTION_CLASSES.unknown
 }
 
+function formatUtcTimestamp(value) {
+  if (!value) return ''
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const day = date.toLocaleDateString('en-GB', { month: 'short', day: 'numeric', timeZone: 'UTC' })
+  const time = date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' })
+  return `${day}, ${time} UTC`
+}
+
 function formatMirrorTimestamp(value) {
   if (!value) return 'unknown'
   const date = new Date(value)
@@ -312,6 +321,8 @@ function togglePodInfo(pod, event) {
     return
   }
   loadPod360(pod)
+  loadConfluenceStatus()
+  loadPod360Schedule()
   const el = event && event.currentTarget
   if (el) {
     const rect = el.getBoundingClientRect()
@@ -352,6 +363,54 @@ async function generatePod360(pod) {
     pod360Error.value = { ...pod360Error.value, [pod.id]: err.message || 'Failed to generate 360' }
   } finally {
     pod360Busy.value = { ...pod360Busy.value, [pod.id]: false }
+  }
+}
+
+const confluenceInfo = ref(null)
+const publishBusy = ref({})
+const publishError = ref({})
+
+const pod360Schedule = ref(null)
+
+async function loadPod360Schedule() {
+  if (pod360Schedule.value) return
+  try {
+    pod360Schedule.value = await apiRequest('/modules/team-tracker/pods/360/schedule')
+  } catch {
+    pod360Schedule.value = null
+  }
+}
+
+const confluenceReady = computed(() => Boolean(confluenceInfo.value && confluenceInfo.value.configured))
+
+async function loadConfluenceStatus() {
+  if (confluenceInfo.value) return
+  try {
+    confluenceInfo.value = await apiRequest('/modules/team-tracker/pods/360/confluence')
+  } catch {
+    confluenceInfo.value = { configured: false, missing: [] }
+  }
+}
+
+function confluenceHint() {
+  if (!confluenceInfo.value) return 'Checking Confluence configuration…'
+  if (confluenceInfo.value.configured) return 'Creates a page under the configured parent'
+  const missing = confluenceInfo.value.missing || []
+  return missing.length
+    ? 'Confluence is not configured. Missing: ' + missing.join(', ')
+    : 'Confluence is not configured yet'
+}
+
+async function publishPod360(pod) {
+  publishBusy.value = { ...publishBusy.value, [pod.id]: true }
+  publishError.value = { ...publishError.value, [pod.id]: '' }
+  try {
+    const data = await apiRequest(`/modules/team-tracker/pods/${pod.id}/360/publish`, { method: 'POST' })
+    pod360.value = { ...pod360.value, [pod.id]: data.report }
+  } catch (err) {
+    publishError.value = { ...publishError.value, [pod.id]: err.message || 'Publish failed' }
+  } finally {
+    publishBusy.value = { ...publishBusy.value, [pod.id]: false }
   }
 }
 
@@ -1552,14 +1611,21 @@ watch(selectedUids, () => {
 
                         <p v-if="pod360Error[pod.id]" class="mt-1 text-[10px] text-red-600 dark:text-red-400">{{ pod360Error[pod.id] }}</p>
 
-                        <div v-else-if="pod360[pod.id]" class="mt-1 flex items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400">
+                        <div v-else-if="pod360[pod.id]" class="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400">
                           <span>Generated {{ formatMirrorTimestamp(pod360[pod.id].generatedAt) }}</span>
                           <button type="button" class="text-primary-600 dark:text-primary-400 hover:underline" @click="toggle360Markdown(pod)">
                             {{ open360Markdown === pod.id ? 'Hide' : 'View' }} markdown
                           </button>
                         </div>
+
                         <p v-else class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
                           No report yet.
+                        </p>
+                        <p class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                          <template v-if="pod360Schedule">
+                            Runs {{ pod360Schedule.label }}<span v-if="pod360Schedule.nextRunAt"> · next {{ formatUtcTimestamp(pod360Schedule.nextRunAt) }}</span>
+                          </template>
+                          <template v-else>Runs weekly on Thursday, 09:00 UTC</template>
                         </p>
 
                         <pre
@@ -1567,15 +1633,28 @@ watch(selectedUids, () => {
                           class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 dark:bg-gray-900 p-2 text-[10px] leading-snug text-gray-600 dark:text-gray-300"
                         >{{ pod360[pod.id].markdown }}</pre>
 
-                        <div class="mt-2 flex items-center gap-2">
+                        <div class="mt-2 flex flex-wrap items-center gap-2">
                           <button
                             type="button"
-                            disabled
-                            class="rounded-full border border-gray-200 dark:border-gray-600 px-2 py-0.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500 cursor-not-allowed"
-                            title="Confluence publishing is not configured yet"
-                          >Publish to Confluence</button>
-                          <span class="text-[10px] text-gray-400 dark:text-gray-500">Not configured yet</span>
+                            class="rounded-full border px-2 py-0.5 text-[10px] font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            :class="confluenceReady
+                              ? 'border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'
+                              : 'border-gray-200 dark:border-gray-600 text-gray-400 dark:text-gray-500'"
+                            :disabled="!confluenceReady || !pod360[pod.id] || publishBusy[pod.id]"
+                            :title="confluenceHint()"
+                            @click="publishPod360(pod)"
+                          >{{ publishBusy[pod.id] ? 'Publishing…' : 'Publish to Confluence' }}</button>
+
+                          <a
+                            v-if="pod360[pod.id] && pod360[pod.id].confluence && pod360[pod.id].confluence.url"
+                            :href="pod360[pod.id].confluence.url"
+                            target="_blank"
+                            rel="noopener"
+                            class="text-[10px] font-medium text-indigo-600 dark:text-indigo-400 hover:underline"
+                          >Open in Confluence</a>
+                          <span v-else class="text-[10px] text-gray-400 dark:text-gray-500">{{ confluenceHint() }}</span>
                         </div>
+                        <p v-if="publishError[pod.id]" class="mt-1 text-[10px] text-red-600 dark:text-red-400">{{ publishError[pod.id] }}</p>
                       </div>
                     </template>
 
