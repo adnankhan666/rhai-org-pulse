@@ -27,7 +27,7 @@ const FEATURE_FIELDS = [
   'customfield_10851'  // Release Type
 ].join(',')
 
-const CHILD_FIELDS = 'key,summary,status,assignee,issuetype,project,parent'
+const CHILD_FIELDS = 'key,summary,status,assignee,issuetype,project,parent,updated,resolutiondate'
 
 const BEHIND_THRESHOLD_PCT = 15
 
@@ -179,7 +179,9 @@ function shapeChild(issue) {
     project: (issue.fields && issue.fields.project && issue.fields.project.key) || null,
     status: (issue.fields && issue.fields.status && issue.fields.status.name) || null,
     statusCategory: statusCategoryOf(issue),
-    assignee: displayName(issue.fields && issue.fields.assignee)
+    assignee: displayName(issue.fields && issue.fields.assignee),
+    updated: (issue.fields && issue.fields.updated) || null,
+    resolutionDate: (issue.fields && issue.fields.resolutiondate) || null
   }
 }
 

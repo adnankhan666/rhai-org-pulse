@@ -311,6 +311,7 @@ function togglePodInfo(pod, event) {
     openInfoPodId.value = null
     return
   }
+  loadPod360(pod)
   const el = event && event.currentTarget
   if (el) {
     const rect = el.getBoundingClientRect()
@@ -324,12 +325,46 @@ function closePodInfo() {
   openInfoPodId.value = null
 }
 
+const pod360 = ref({})
+const pod360Busy = ref({})
+const pod360Error = ref({})
+const open360Markdown = ref(null)
+
+async function loadPod360(pod) {
+  if (Object.prototype.hasOwnProperty.call(pod360.value, pod.id)) return
+  try {
+    const data = await apiRequest(`/modules/team-tracker/pods/${pod.id}/360`)
+    pod360.value = { ...pod360.value, [pod.id]: data.report || null }
+  } catch (err) {
+    pod360Error.value = { ...pod360Error.value, [pod.id]: err.message || 'Failed to load 360' }
+  }
+}
+
+async function generatePod360(pod) {
+  pod360Busy.value = { ...pod360Busy.value, [pod.id]: true }
+  pod360Error.value = { ...pod360Error.value, [pod.id]: '' }
+  try {
+    const data = await apiRequest(`/modules/team-tracker/pods/${pod.id}/360`, { method: 'POST' })
+    pod360.value = { ...pod360.value, [pod.id]: data.report }
+    open360Markdown.value = pod.id
+  } catch (err) {
+    pod360Error.value = { ...pod360.value, [pod.id]: err.message || 'Failed to generate 360' }
+    pod360Error.value = { ...pod360Error.value, [pod.id]: err.message || 'Failed to generate 360' }
+  } finally {
+    pod360Busy.value = { ...pod360Busy.value, [pod.id]: false }
+  }
+}
+
+function toggle360Markdown(pod) {
+  open360Markdown.value = open360Markdown.value === pod.id ? null : pod.id
+}
+
 function isInfoOpen(pod) {
   return openInfoPodId.value === pod.id
 }
 
 function tooltipPositionClass(pod) {
-  return flippedTooltips.value[pod.id] ? 'bottom-full pb-2' : 'top-full pt-2'
+  return flippedTooltips.value[pod.id] ? 'bottom-6' : 'top-6'
 }
 
 function statusPillText(pod) {
@@ -1418,17 +1453,158 @@ watch(selectedUids, () => {
             <div class="absolute -right-6 -top-6 h-16 w-16 rounded-full bg-primary-200/40 dark:bg-primary-900/20 blur-2xl"></div>
           </div>
           <div class="relative">
-            <div class="flex items-start justify-between gap-2">
+            <div class="flex items-center justify-between gap-2">
               <div class="min-w-0 flex-1 flex items-center gap-1.5">
                 <h3 class="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">{{ pod.name }}</h3>
                 <span
                   v-if="pod.status === 'archived'"
                   class="inline-flex items-center px-1.5 py-px rounded-full text-[9px] font-medium bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 flex-shrink-0"
                 >Archived</span>
+                <div class="group flex items-center flex-shrink-0">
+                  <button
+                    type="button"
+                    :aria-label="isInfoOpen(pod) ? 'Hide 360 report' : 'Show 360 report'"
+                    :aria-expanded="isInfoOpen(pod)"
+                    class="shrink-0 self-center rounded-full border px-1.5 py-0.5 text-[9px] leading-none font-bold transition-colors"
+                    :class="isInfoOpen(pod)
+                      ? 'border-indigo-400 dark:border-indigo-500 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300'
+                      : 'border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'"
+                    @click="togglePodInfo(pod, $event)"
+                  >360</button>
+                  <div v-if="isInfoOpen(pod)" class="fixed inset-0 z-20" @click="closePodInfo"></div>
+                  <div
+                    v-if="isInfoOpen(pod)"
+                    class="absolute left-0 z-30 w-96 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3.5 shadow-xl"
+                    :class="tooltipPositionClass(pod)"
+                  >
+                    <template v-if="podMirror(pod)">
+                      <div class="text-xs font-medium leading-snug text-gray-900 dark:text-gray-100 line-clamp-2">
+                        {{ podMirror(pod).summary }}
+                      </div>
+                      <div class="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500">
+                        Jira · updated {{ formatMirrorTimestamp(podMirror(pod).asOf) }}
+                      </div>
+
+                      <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Health</div>
+                        <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Color</dt>
+                            <dd class="min-w-0 flex-1 text-xs font-medium text-gray-900 dark:text-gray-100">{{ podMirror(pod).colorStatus || '—' }}</dd>
+                          </div>
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Status</dt>
+                            <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).status || '—' }}</dd>
+                          </div>
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Freeze</dt>
+                            <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">
+                              {{ podMirror(pod).milestone?.codeFreezeDate || '—' }}
+                            </dd>
+                          </div>
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Progress</dt>
+                            <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">
+                              {{ podMirror(pod).progress.pct }}% · {{ podMirror(pod).progress.done }}/{{ podMirror(pod).progress.total }}
+                            </dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Ownership</div>
+                        <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Assignee</dt>
+                            <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100" :title="podMirror(pod).assignee || ''">{{ podMirror(pod).assignee || '—' }}</dd>
+                          </div>
+                          <div class="flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">PM</dt>
+                            <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).productManager || '—' }}</dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
+                        <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Delivery</div>
+                        <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
+                          <div class="col-span-2 flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Fix version</dt>
+                            <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).fixVersion || '—' }}</dd>
+                          </div>
+                          <div class="col-span-2 flex gap-2">
+                            <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Rel type</dt>
+                            <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).releaseType || '—' }}</dd>
+                          </div>
+                        </dl>
+                      </div>
+
+                      <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
+                        <div class="flex items-center justify-between gap-2">
+                          <span class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">360 report</span>
+                          <button
+                            type="button"
+                            class="rounded-full border border-primary-300 dark:border-primary-700 px-2 py-0.5 text-[10px] font-semibold text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 disabled:opacity-50"
+                            :disabled="pod360Busy[pod.id]"
+                            @click="generatePod360(pod)"
+                          >{{ pod360Busy[pod.id] ? 'Generating…' : (pod360[pod.id] ? 'Regenerate' : 'Generate') }}</button>
+                        </div>
+
+                        <p v-if="pod360Error[pod.id]" class="mt-1 text-[10px] text-red-600 dark:text-red-400">{{ pod360Error[pod.id] }}</p>
+
+                        <div v-else-if="pod360[pod.id]" class="mt-1 flex items-center gap-2 text-[10px] text-gray-500 dark:text-gray-400">
+                          <span>Generated {{ formatMirrorTimestamp(pod360[pod.id].generatedAt) }}</span>
+                          <button type="button" class="text-primary-600 dark:text-primary-400 hover:underline" @click="toggle360Markdown(pod)">
+                            {{ open360Markdown === pod.id ? 'Hide' : 'View' }} markdown
+                          </button>
+                        </div>
+                        <p v-else class="mt-1 text-[10px] text-gray-400 dark:text-gray-500">
+                          No report yet.
+                        </p>
+
+                        <pre
+                          v-if="open360Markdown === pod.id && pod360[pod.id]"
+                          class="mt-2 max-h-48 overflow-auto whitespace-pre-wrap rounded-lg bg-gray-50 dark:bg-gray-900 p-2 text-[10px] leading-snug text-gray-600 dark:text-gray-300"
+                        >{{ pod360[pod.id].markdown }}</pre>
+
+                        <div class="mt-2 flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled
+                            class="rounded-full border border-gray-200 dark:border-gray-600 px-2 py-0.5 text-[10px] font-semibold text-gray-400 dark:text-gray-500 cursor-not-allowed"
+                            title="Confluence publishing is not configured yet"
+                          >Publish to Confluence</button>
+                          <span class="text-[10px] text-gray-400 dark:text-gray-500">Not configured yet</span>
+                        </div>
+                      </div>
+                    </template>
+
+                    <template v-else>
+                      <div class="text-xs font-medium text-gray-900 dark:text-gray-100">No Jira feature linked</div>
+                      <p class="mt-1 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
+                        Progress and health are unknown for this pod. Add a feature key to mirror live status.
+                      </p>
+                      <dl class="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5 border-t border-gray-100 dark:border-gray-700 pt-2">
+                        <div class="flex gap-2">
+                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Pod</dt>
+                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ pod.status === 'archived' ? 'Archived' : 'Active' }}</dd>
+                        </div>
+                        <div class="flex gap-2">
+                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Members</dt>
+                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ pod.memberCount }}</dd>
+                        </div>
+                        <div class="col-span-2 flex gap-2">
+                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Created</dt>
+                          <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{{ pod.createdBy }} · {{ formatDate(pod.createdAt) }}</dd>
+                        </div>
+                      </dl>
+                    </template>
+                  </div>
+                </div>
               </div>
 
               <span
-                class="shrink-0 whitespace-nowrap inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-medium"
+                class="shrink-0 whitespace-nowrap inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[10px] font-medium leading-none"
                 :class="statusPillClass(pod)"
                 :title="statusPillTitle(pod)"
               >
@@ -1439,108 +1615,6 @@ watch(selectedUids, () => {
                 {{ statusPillText(pod) }}
               </span>
 
-              <div class="relative group flex-shrink-0">
-                <button
-                  type="button"
-                  :aria-label="isInfoOpen(pod) ? 'Hide pod details' : 'Show pod details'"
-                  :aria-expanded="isInfoOpen(pod)"
-                  class="h-5 w-5 inline-flex items-center justify-center rounded-full border text-[9px] font-bold transition-colors"
-                  :class="isInfoOpen(pod)
-                    ? 'border-primary-400 dark:border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300'
-                    : 'border-gray-200 dark:border-gray-600 bg-white/80 dark:bg-gray-800/80 text-gray-500 dark:text-gray-400 hover:text-primary-600 dark:hover:text-primary-400'"
-                  @click="togglePodInfo(pod, $event)"
-                >i</button>
-                <div v-if="isInfoOpen(pod)" class="fixed inset-0 z-20" @click="closePodInfo"></div>
-                <div
-                  v-if="isInfoOpen(pod)"
-                  class="absolute right-0 z-30 w-96 rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-3.5 shadow-xl"
-                  :class="tooltipPositionClass(pod)"
-                >
-                  <template v-if="podMirror(pod)">
-                    <div class="text-xs font-medium leading-snug text-gray-900 dark:text-gray-100 line-clamp-2">
-                      {{ podMirror(pod).summary }}
-                    </div>
-                    <div class="mt-0.5 text-[10px] text-gray-400 dark:text-gray-500">
-                      Jira · updated {{ formatMirrorTimestamp(podMirror(pod).asOf) }}
-                    </div>
-
-                    <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
-                      <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Health</div>
-                      <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Color</dt>
-                          <dd class="min-w-0 flex-1 text-xs font-medium text-gray-900 dark:text-gray-100">{{ podMirror(pod).colorStatus || '—' }}</dd>
-                        </div>
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Status</dt>
-                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).status || '—' }}</dd>
-                        </div>
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Freeze</dt>
-                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">
-                            {{ podMirror(pod).milestone?.codeFreezeDate || '—' }}
-                          </dd>
-                        </div>
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Progress</dt>
-                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">
-                            {{ podMirror(pod).progress.pct }}% · {{ podMirror(pod).progress.done }}/{{ podMirror(pod).progress.total }}
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
-                      <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Ownership</div>
-                      <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Assignee</dt>
-                          <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100" :title="podMirror(pod).assignee || ''">{{ podMirror(pod).assignee || '—' }}</dd>
-                        </div>
-                        <div class="flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">PM</dt>
-                          <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).productManager || '—' }}</dd>
-                        </div>
-                      </dl>
-                    </div>
-
-                    <div class="mt-3 border-t border-gray-100 dark:border-gray-700 pt-2">
-                      <div class="text-[10px] font-semibold uppercase tracking-wider text-gray-400 dark:text-gray-500">Delivery</div>
-                      <dl class="mt-1 grid grid-cols-2 gap-x-5 gap-y-1.5">
-                        <div class="col-span-2 flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Fix version</dt>
-                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).fixVersion || '—' }}</dd>
-                        </div>
-                        <div class="col-span-2 flex gap-2">
-                          <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Rel type</dt>
-                          <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ podMirror(pod).releaseType || '—' }}</dd>
-                        </div>
-                      </dl>
-                    </div>
-                  </template>
-
-                  <template v-else>
-                    <div class="text-xs font-medium text-gray-900 dark:text-gray-100">No Jira feature linked</div>
-                    <p class="mt-1 text-[11px] leading-snug text-gray-500 dark:text-gray-400">
-                      Progress and health are unknown for this pod. Add a feature key to mirror live status.
-                    </p>
-                    <dl class="mt-3 grid grid-cols-2 gap-x-5 gap-y-1.5 border-t border-gray-100 dark:border-gray-700 pt-2">
-                      <div class="flex gap-2">
-                        <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Pod</dt>
-                        <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ pod.status === 'archived' ? 'Archived' : 'Active' }}</dd>
-                      </div>
-                      <div class="flex gap-2">
-                        <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Members</dt>
-                        <dd class="min-w-0 flex-1 text-xs text-gray-900 dark:text-gray-100">{{ pod.memberCount }}</dd>
-                      </div>
-                      <div class="col-span-2 flex gap-2">
-                        <dt class="w-16 shrink-0 text-[11px] text-gray-500 dark:text-gray-400">Created</dt>
-                        <dd class="min-w-0 flex-1 truncate text-xs text-gray-900 dark:text-gray-100">{{ pod.createdBy }} · {{ formatDate(pod.createdAt) }}</dd>
-                      </div>
-                    </dl>
-                  </template>
-                </div>
-              </div>
             </div>
 
             <div class="mt-2 flex items-center -space-x-1">
@@ -1642,17 +1716,20 @@ watch(selectedUids, () => {
                 </span>
               </div>
 
-            <div v-if="pod.status === 'active' && canManagePodUi(pod)" class="mt-2 flex flex-wrap items-center gap-1.5">
-              <button
-                type="button"
-                class="px-2 py-0.5 text-[10px] font-semibold rounded-full border border-green-300 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
-                @click="openCompleteAction(pod)"
-              >Completed</button>
-              <button
-                type="button"
-                class="px-2 py-0.5 text-[10px] font-semibold rounded-full border border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
-                @click="openNextOutcomeAction(pod)"
-              >Next outcome</button>
+            <div class="mt-2 flex flex-wrap items-center gap-1.5">
+              <template v-if="pod.status === 'active' && canManagePodUi(pod)">
+                <button
+                  type="button"
+                  class="px-2 py-0.5 text-[10px] font-semibold rounded-full border border-green-300 dark:border-green-700 text-green-700 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+                  @click="openCompleteAction(pod)"
+                >Completed</button>
+                <button
+                  type="button"
+                  class="px-2 py-0.5 text-[10px] font-semibold rounded-full border border-primary-300 dark:border-primary-700 text-primary-700 dark:text-primary-300 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors"
+                  @click="openNextOutcomeAction(pod)"
+                >Next outcome</button>
+              </template>
+
             </div>
           </div>
         </div>

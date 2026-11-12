@@ -681,7 +681,7 @@ describe('PodsView', () => {
     expect(wrapper.text()).toContain('PurpleSTRAT-1234')
     expect(wrapper.text()).toContain('PurpleSTRAT-1122')
     expect(wrapper.text()).toContain('In progress')
-    const infoButton = wrapper.find('button[aria-label="Show pod details"]')
+    const infoButton = wrapper.find('button[aria-label="Show 360 report"]')
     expect(infoButton.exists()).toBe(true)
     expect(infoButton.attributes('aria-expanded')).toBe('false')
     expect(wrapper.text()).toContain('Completed')
@@ -706,11 +706,11 @@ describe('PodsView', () => {
 
     const panelCopy = 'Progress and health are unknown for this pod.'
     expect(wrapper.text()).not.toContain(panelCopy)
-    await wrapper.find('button[aria-label="Show pod details"]').trigger('click')
-    expect(wrapper.find('button[aria-label="Hide pod details"]').attributes('aria-expanded')).toBe('true')
+    await wrapper.find('button[aria-label="Show 360 report"]').trigger('click')
+    expect(wrapper.find('button[aria-label="Hide 360 report"]').attributes('aria-expanded')).toBe('true')
     expect(wrapper.text()).toContain(panelCopy)
 
-    await wrapper.find('button[aria-label="Hide pod details"]').trigger('click')
+    await wrapper.find('button[aria-label="Hide 360 report"]').trigger('click')
     expect(wrapper.text()).not.toContain(panelCopy)
   })
 
