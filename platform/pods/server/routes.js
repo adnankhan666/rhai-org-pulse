@@ -28,6 +28,7 @@ const {
 const { getOrgDisplayNames } = require('../../../shared/server/roster-sync/config')
 const { createJiraClient } = require('../../../shared/server/jira')
 const { primaryFocusKey, buildMirror, buildMirrors, validateFeatureKeys } = require('./pod-mirror')
+const { buildPod360 } = require('./pod-360')
 
 function asyncRoute(fn) {
   return function (req, res, next) {
@@ -349,6 +350,118 @@ function registerPodRoutes(router, context) {
     }
 
     res.json({ mirrors, requested: podIds.length })
+  }))
+
+  /**
+   * @openapi
+   * /api/modules/team-tracker/pods/{podId}/360:
+   *   get:
+   *     tags: ['Pods']
+   *     summary: Latest generated 360 report for a pod
+   *     parameters:
+   *       - in: path
+   *         name: podId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Latest report, or null when none has been generated
+   *       404:
+   *         description: Pod not found
+   *   post:
+   *     tags: ['Pods']
+   *     summary: Generate a pod 360 report
+   *     description: >
+   *       Applies the 360 contract to pod scope (feature plus child items).
+   *       Deterministic: the same pod state produces the same markdown. Writes
+   *       only to local storage; publishing is a separate action.
+   *     parameters:
+   *       - in: path
+   *         name: podId
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       201:
+   *         description: Report generated and stored
+   *       404:
+   *         description: Pod not found
+   *       502:
+   *         description: Mirror data unavailable
+   */
+  router.get('/pods/:podId/360', readAccess, asyncRoute(async function (req, res) {
+    const pod = await getPod(storage, req.params.podId)
+    if (!pod) throw new PodError(404, 'Pod not found')
+
+    const dir = `team-data/pods/${pod.id}/360`
+    let files = []
+    try {
+      files = await storage.listStorageFiles(dir)
+    } catch (err) {
+      console.warn('[pods] 360 listing failed:', err.message)
+    }
+
+    const latest = files.filter(name => name.endsWith('.json')).sort().pop()
+    if (!latest) {
+      return res.json({ podId: pod.id, report: null })
+    }
+
+    const stored = await storage.readFromStorage(`${dir}/${latest}`)
+    res.json({ podId: pod.id, report: stored })
+  }))
+
+  router.post('/pods/:podId/360', readAccess, asyncRoute(async function (req, res) {
+    const pod = await getPod(storage, req.params.podId)
+    if (!pod) throw new PodError(404, 'Pod not found')
+
+    const issueKey = primaryFocusKey(pod)
+    if (!issueKey) {
+      throw new PodError(400, 'This pod has no Jira feature key to report on')
+    }
+
+    const peopleMap = await loadPeopleMap(storage)
+    const members = (pod.memberUids || [])
+      .map(uid => peopleMap[uid])
+      .filter(Boolean)
+      .map(person => ({ name: person.name }))
+
+    let releases = []
+    try {
+      const cache = await storage.readFromStorage('releases/delivery/product-pages-releases-cache.json')
+      releases = (cache && cache.releases) || []
+    } catch (err) {
+      console.warn('[pods] Product Pages cache unavailable:', err.message)
+    }
+
+    let mirror
+    try {
+      mirror = await buildMirror({
+        jira: podJiraClient,
+        issueKey,
+        releases,
+        startDate: pod.createdAt
+      })
+    } catch (err) {
+      throw new PodError(502, 'Failed to build the work mirror for this pod', { reason: err.message })
+    }
+
+    const { markdown, data } = buildPod360({ pod, mirror, members })
+    const day = new Date().toISOString().slice(0, 10)
+    const key = `team-data/pods/${pod.id}/360/${day}.json`
+
+    const report = {
+      podId: pod.id,
+      issueKey,
+      generatedAt: data.generatedAt,
+      markdown,
+      data,
+      confluence: null
+    }
+    await storage.writeToStorage(key, report)
+    await audit(context, req, 'pod.360.generate', pod, `Generated 360 report for "${pod.name}"`)
+
+    res.status(201).json({ podId: pod.id, report })
   }))
 
   /**

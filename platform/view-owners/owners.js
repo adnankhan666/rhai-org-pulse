@@ -88,6 +88,7 @@ export const viewOwners = {
   'team-tracker/org-explorer':                     'Dipanshu Gupta',
   'team-tracker/people':                           'Dipanshu Gupta',
   'team-tracker/person-detail':                    'Dipanshu Gupta',
+  'team-tracker/pods':                             'adnankhan666',
   'team-tracker/reports':                          'Alex Corvin',
   'team-tracker/team-detail':                      'Alex Corvin',
   'team-tracker/unassigned':                       'Alex Corvin',
