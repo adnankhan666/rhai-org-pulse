@@ -376,6 +376,66 @@ string: `3.7 EA1 RHOAI RELEASE` → `rhai-3.7.EA1` → `2026-12-11`. Version nam
 collide across projects and some are archived, so the match prefers an entry
 that actually carries a freeze date.
 
+### Pod 360 reports
+
+Each pod can produce a 360 report: the ODH Dashboard 360 contract applied to
+pod scope (the feature and its child items) instead of a team board. The
+generator is deterministic — the same pod state always produces the same
+markdown — so reports are diffable and a broken data source cannot invent a
+narrative.
+
+Sections: `snapshot`, `risks` (stale, stuck in review, unassigned, overloaded),
+`strat_features`, `capacity`, plus explicit entries for what cannot be filled
+yet (activity-type mix, PR status). When child items are owned by people who are
+not pod members, the report names them rather than showing an empty capacity
+table.
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/api/modules/team-tracker/pods/:podId/360` | Latest stored report |
+| `POST` | `/api/modules/team-tracker/pods/:podId/360` | Generate and store |
+| `GET` | `/api/modules/team-tracker/pods/360/confluence` | Whether publishing is configured |
+| `POST` | `/api/modules/team-tracker/pods/:podId/360/publish` | Create the Confluence page |
+
+Reports are stored at `team-data/pods/<podId>/360/<YYYY-MM-DD>.json` through the
+storage abstraction, alongside the markdown and the generated JSON. Generation
+writes only to local storage.
+
+### Weekly generation
+
+Reports also run on a schedule: **Thursday 09:00 UTC**. A one-minute tick checks
+whether the slot has passed since the last run, so a restart catches up rather
+than skipping a week — and a cold start waits for the next slot instead of
+firing immediately. State lives in `team-data/pods/360-schedule.json`; the
+schedule is exposed at `GET /api/modules/team-tracker/pods/360/schedule`, and
+`POD_360_SCHEDULE=off` disables the job.
+
+The scheduled run uses the same generator as the Generate button, so a report
+produced by the schedule is byte-identical to one produced by hand.
+
+### Publishing to Confluence
+
+Publishing is a separate, explicit action — generation never publishes, because
+it is an external write.
+
+Publishing stays disabled until every setting is present; the UI names the ones
+that are missing instead of failing at click time:
+
+| Setting | Meaning |
+|---|---|
+| `CONFLUENCE_BASE_URL` | e.g. `https://redhat.atlassian.net` |
+| `CONFLUENCE_EMAIL` | Atlassian account email |
+| `CONFLUENCE_API_TOKEN` | API token with page-create permission |
+| `CONFLUENCE_SPACE_KEY` | Space for pod 360 pages |
+| `CONFLUENCE_PARENT_ID` | Parent page id new pages are created under |
+
+These are declared in `platform/pods/manifest.json` under `secrets.module`, so
+they resolve through `context.secrets` like any module secret. The page is
+created as `<Pod name> — 360 — <date>` with the markdown converted to
+Confluence storage format (headings, paragraphs, lists, pipe tables, bold,
+inline code); the returned page id and URL are written back onto the stored
+report.
+
 Production pods live under `team-data/pods/<podId>.json`. In demo mode they are
 kept in an in-memory session store so create/duplicate/archive can be exercised
 without making the demo fixtures writable.

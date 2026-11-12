@@ -18,6 +18,40 @@
     "entry": "./server/index.js"
   },
   "secrets": {
-    "platform": ["jira"]
+    "platform": [
+      "jira"
+    ],
+    "module": [
+      {
+        "key": "CONFLUENCE_BASE_URL",
+        "description": "Confluence base URL (e.g. https://redhat.atlassian.net)",
+        "required": false,
+        "group": "confluence"
+      },
+      {
+        "key": "CONFLUENCE_EMAIL",
+        "description": "Confluence account email",
+        "required": false,
+        "group": "confluence"
+      },
+      {
+        "key": "CONFLUENCE_API_TOKEN",
+        "description": "Atlassian API token with page create permission",
+        "required": false,
+        "group": "confluence"
+      },
+      {
+        "key": "CONFLUENCE_SPACE_KEY",
+        "description": "Space key for pod 360 pages",
+        "required": false,
+        "group": "confluence"
+      },
+      {
+        "key": "CONFLUENCE_PARENT_ID",
+        "description": "Parent page id that pod 360 pages are created under",
+        "required": false,
+        "group": "confluence"
+      }
+    ]
   }
 }
